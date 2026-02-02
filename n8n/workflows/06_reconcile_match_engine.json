@@ -1,0 +1,201 @@
+{
+  "name": "Reconcile & Match Engine",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 100],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 4,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Create Recon Run",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 80],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "insert",
+        "table": "recon_runs",
+        "schema": "public",
+        "columns": "time_window_start,time_window_end,processors_included,stats",
+        "values": "={{ $today.minus(days=1).toISO() }},{{ $today.toISO() }},{{ ['stripe','paypal','square','ach'] }},{}"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Load Transactions",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 140],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "select",
+        "table": "ledger_transactions",
+        "schema": "public",
+        "columns": "*",
+        "conditions": "occurred_at >= '{{ $today.minus(days=1).toISO() }}' AND occurred_at < '{{ $today.toISO() }}'"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Load Payouts",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "select",
+        "table": "payouts",
+        "schema": "public",
+        "columns": "*",
+        "conditions": "payout_date >= '{{ $today.minus(days=1).toISODateString() }}' AND payout_date <= '{{ $today.toISODateString() }}'"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Match & Create Exceptions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [650, 160],
+      "parameters": {
+        "language": "python",
+        "code": "# Match transactions to payouts and emit recon_matches and recon_exceptions\nimport uuid\nrun_id = {{$node[\"Create Recon Run\"].json[\"id\"] if $node[\"Create Recon Run\"].json else 1}}\ntxns = $items(2)  # transactions\npayouts = $items(3)  # payouts\nmatches = []\nexceptions = []\n# very simple matching: net amount must equal payout amount (per processor)\nfor t in txns:\n    matched = False\n    for p in payouts:\n        if t['json']['processor'] == p['json']['processor'] and abs(t['json']['net_amount'] - p['json']['payout_amount']) < 0.01:\n            matches.append({\n                'run_id': run_id,\n                'left_entity_type': 'transaction',\n                'left_entity_id': t['json']['id'],\n                'right_entity_type': 'payout',\n                'right_entity_id': p['json']['external_id'],\n                'confidence': 1.0,\n                'reason': 'Exact net match'\n            })\n            matched = True\n            break\n    if not matched:\n        exceptions.append({\n            'run_id': run_id,\n            'exception_type': 'unmatched_transaction',\n            'severity': 'high',\n            'entity_ref': t['json']['id'],\n            'details_json': {'message': 'No matching payout found'}\n        })\nreturn [{'json': {'matches': matches, 'exceptions': exceptions}}]"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Insert Matches",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 120],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "insert",
+        "table": "recon_matches",
+        "schema": "public",
+        "columns": "run_id,left_entity_type,left_entity_id,right_entity_type,right_entity_id,confidence,reason",
+        "values": "={{ $json.matches.map(m => `${m.run_id},${m.left_entity_type},${m.left_entity_id},${m.right_entity_type},${m.right_entity_id},${m.confidence},${m.reason}`).join(';') }}"
+      }
+    },
+    {
+      "id": "7",
+      "name": "Insert Exceptions",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 200],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "insert",
+        "table": "recon_exceptions",
+        "schema": "public",
+        "columns": "run_id,exception_type,severity,entity_ref,details_json",
+        "values": "={{ $json.exceptions.map(e => `${e.run_id},${e.exception_type},${e.severity},${e.entity_ref},${JSON.stringify(e.details_json)}`).join(';') }}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Create Recon Run",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Transactions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Load Payouts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Recon Run": {
+      "main": [
+        [
+          {
+            "node": "Match & Create Exceptions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Transactions": {
+      "main": [
+        [
+          {
+            "node": "Match & Create Exceptions",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Load Payouts": {
+      "main": [
+        [
+          {
+            "node": "Match & Create Exceptions",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Match & Create Exceptions": {
+      "main": [
+        [
+          {
+            "node": "Insert Matches",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert Exceptions",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  }
+}
