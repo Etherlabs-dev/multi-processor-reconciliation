@@ -1,0 +1,107 @@
+{
+  "name": "QuickBooks Sync",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 100],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 5,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Load Matches",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "select",
+        "table": "recon_matches",
+        "schema": "public",
+        "columns": "*",
+        "conditions": "confidence >= 0.99"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Build Journal Entries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [600, 100],
+      "parameters": {
+        "language": "python",
+        "code": "# Build a simple QuickBooks journal entry payload per match\nentries = []\nfor m in items:\n    row = m['json']\n    payload = {\n        'clearing_account': f\"{row['left_entity_type'].capitalize()} Clearing\",  # e.g. Transaction Clearing\n        'journal_entry_id': f\"JE{row['id']}\",\n        'totals': row.get('confidence', 1.0) * 100,\n        'posted_at': str($now)\n    }\n    entries.append(payload)\nreturn [{'json': {'entries': entries}}]"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Insert QB Sync Job",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [800, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "insert",
+        "table": "qb_sync_jobs",
+        "schema": "public",
+        "columns": "run_id,status,qb_payload_json",
+        "values": "={{ 1 }},pending,{{ $json.entries }}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Load Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Matches": {
+      "main": [
+        [
+          {
+            "node": "Build Journal Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Journal Entries": {
+      "main": [
+        [
+          {
+            "node": "Insert QB Sync Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
