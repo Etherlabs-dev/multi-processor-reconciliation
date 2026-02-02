@@ -1,0 +1,5 @@
+id,processor_id,account_name,credentials_json,created_at
+1,1,Stripe Main,{},2025-12-01
+2,2,PayPal Main,{},2025-12-01
+3,3,Square Register,{},2025-12-01
+4,4,ACH Import,{},2025-12-01
