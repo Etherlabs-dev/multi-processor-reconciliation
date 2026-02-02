@@ -1,0 +1,4 @@
+id,processor,processor_account_id,external_id,payout_amount,currency,payout_date,status
+1,stripe,1,po_stripe_1,97.1,USD,2026-01-25,paid
+2,paypal,2,po_paypal_1,194.2,USD,2026-01-25,paid
+3,square,3,po_square_1,145.5,USD,2026-01-25,paid
