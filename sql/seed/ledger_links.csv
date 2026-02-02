@@ -1,0 +1,2 @@
+id,transaction_id,related_transaction_id,relation_type
+1,4e9ae242-12b0-4864-abcd-465b13bb3e8d,4e9ae242-12b0-4864-abcd-465b13bb3e8d,self
