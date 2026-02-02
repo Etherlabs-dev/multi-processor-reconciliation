@@ -1,0 +1,4 @@
+id,processor,event_type,external_id,payload_json,created_at
+1,stripe,charge.succeeded,evt_stripe_1,{},2026-01-24
+2,paypal,sale,evt_paypal_1,{},2026-01-24
+3,square,payment,evt_square_1,{},2026-01-24
