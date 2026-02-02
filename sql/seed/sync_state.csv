@@ -1,0 +1,5 @@
+id,processor_account_id,last_cursor,last_synced_at
+1,1,cursor1,2026-01-20
+2,2,cursor2,2026-01-20
+3,3,cursor3,2026-01-20
+4,4,,2026-01-20
