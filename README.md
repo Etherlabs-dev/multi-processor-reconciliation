@@ -115,7 +115,6 @@ This project gives you a repeatable, open-source reconciliation pipeline you can
 │  │  ├─ matches.csv
 │  │  ├─ discrepancies.csv
 │  │  └─ qbo_journal_entries.csv
-│  └─ README.md
 │
 ├─ n8n/
 │  ├─ workflows/
@@ -123,12 +122,10 @@ This project gives you a repeatable, open-source reconciliation pipeline you can
 │  │  ├─ 02_ingest_paypal.json
 │  │  ├─ 03_ingest_square.json
 │  │  ├─ 04_ingest_ach_import.json
-│  │  ├─ 05_build_unified_ledger.json
-│  │  ├─ 06_match_transactions.json
-│  │  ├─ 07_discrepancy_queue.json
-│  │  ├─ 08_qbo_sync_journals.json
-│  │  └─ 09_cash_position_snapshot.json
-│  └─ README.md
+│  │  ├─ 05_normalize_enrich.json
+│  │  ├─ 06_reconcile_match_engine.json
+│  │  ├─ 07_qb_sync.json
+│  │  └─ 08_exception_notifications.json
 │
 ├── docs/
 │   ├── architecture.md
