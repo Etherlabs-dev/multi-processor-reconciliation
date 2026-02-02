@@ -1,0 +1,106 @@
+{
+  "name": "Normalize & Enrich",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 100],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 3,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Query Ledger",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "select",
+        "table": "ledger_transactions",
+        "schema": "public",
+        "columns": "id,processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Enrich Transactions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [600, 100],
+      "parameters": {
+        "language": "python",
+        "code": "# Example enrichment: ensure net = gross - fees and uppercase currency\nitems_out = []\nfor item in items:\n    gross = float(item['json'].get('gross_amount', 0))\n    fees = float(item['json'].get('fee_amount', 0))\n    net = gross - fees\n    enriched = item['json'].copy()\n    enriched['net_amount'] = round(net, 2)\n    enriched['currency'] = (enriched.get('currency') or '').upper()\n    # dedupe hash could be generated here if desired\n    items_out.append({'json': enriched})\nreturn items_out"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Upsert Enriched Rows",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [800, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "upsert",
+        "table": "ledger_transactions",
+        "schema": "public",
+        "columns": "id,processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status",
+        "values": "={{ Object.values($json).join(',') }}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Query Ledger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Ledger": {
+      "main": [
+        [
+          {
+            "node": "Enrich Transactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Transactions": {
+      "main": [
+        [
+          {
+            "node": "Upsert Enriched Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
