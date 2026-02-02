@@ -102,7 +102,7 @@ This project gives you a repeatable, open-source reconciliation pipeline you can
 
 ```
 .
-├─ db/
+├─ sql/
 │  ├─ schema.sql
 │  ├─ seed/
 │  │  ├─ processors.csv
@@ -130,13 +130,11 @@ This project gives you a repeatable, open-source reconciliation pipeline you can
 │  │  └─ 09_cash_position_snapshot.json
 │  └─ README.md
 │
-├─ docs/
-│  ├─ matching-logic.md
-│  ├─ quickbooks-online.md
-│  ├─ demo-script.md
-│  └─ screenshots/
+├── docs/
+│   ├── architecture.md
+│   └─ screenshots/
 │
-├─ .env.example
+└── .env.example                  # Template for environment variables (API keys, DB connection, etc.)
 ├─ LICENSE
 └─ README.md
 ```
