@@ -1,0 +1,4 @@
+id,processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status
+4e9ae242-12b0-4864-abcd-465b13bb3e8d,stripe,1,ch_stripe_1,charge,100.0,2.9,97.1,USD,2026-01-24,cust_001,Test charge,succeeded
+6a165013-f471-4561-b011-35bbc85159e9,paypal,2,txn_paypal_1,payment,200.0,5.8,194.2,USD,2026-01-23,cust_002,Test PayPal payment,completed
+22062477-d50a-4f71-ad84-1cf34b3e6cb6,square,3,txn_square_1,payment,150.0,4.5,145.5,USD,2026-01-22,cust_003,Test Square payment,completed
