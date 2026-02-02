@@ -1,0 +1,2 @@
+id,time_window_start,time_window_end,processors_included,stats
+1,2026-01-22,2026-01-25,"['stripe', 'paypal', 'square']",{}
