@@ -1,0 +1,106 @@
+{
+  "name": "Exception Notifications",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 100],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 6,
+              "minute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Load Exceptions",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "select",
+        "table": "recon_exceptions",
+        "schema": "public",
+        "columns": "*",
+        "conditions": "severity = 'high'"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Format Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [600, 100],
+      "parameters": {
+        "language": "python",
+        "code": "# Build an email body summarizing exceptions\nlines = []\nfor exc in items:\n    j = exc['json']\n    line = f\"Exception {j['id']}: {j['exception_type']} on entity {j['entity_ref']}\"\n    lines.append(line)\nbody = '\\n'.join(lines) if lines else 'No high-severity exceptions today.'\nreturn [{'json': {'subject': 'Reconciliation Exceptions Digest', 'body': body}}]"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [800, 100],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials"
+        }
+      },
+      "parameters": {
+        "fromEmail": "finance@example.com",
+        "toEmail": "team@example.com",
+        "subject": "={{ $json[\"subject\"] }}",
+        "text": "={{ $json[\"body\"] }}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Load Exceptions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Exceptions": {
+      "main": [
+        [
+          {
+            "node": "Format Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Digest": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
