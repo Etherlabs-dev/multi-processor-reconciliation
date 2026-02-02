@@ -1,0 +1,120 @@
+{
+  "name": "Ingest Square",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 100],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyDay",
+              "hour": 1,
+              "minute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "HTTP Request: Square",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [400, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "square-api-credentials"
+        }
+      },
+      "parameters": {
+        "url": "https://connect.squareup.com/v2/payments",
+        "method": "GET",
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "begin_time",
+              "value": "={{ $now.minus(days=1).toISO() }}"
+            },
+            {
+              "name": "end_time",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "sort_order",
+              "value": "ASC"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "Transform to Ledger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [600, 100],
+      "parameters": {
+        "language": "python",
+        "code": "# Convert Square payments into canonical ledger rows\nitems_out = []\nfor item in items:\n    payments = item.get('response', {}).get('payments', [])\n    for p in payments:\n        amount_money = p.get('amount_money', {})\n        fee_money = p.get('total_fee_money', {})\n        gross = float(amount_money.get('amount', 0)) / 100.0\n        fees = float(fee_money.get('amount', 0)) / 100.0\n        ledger = {\n            'processor': 'square',\n            'processor_account_id': 3,\n            'external_id': p.get('id'),\n            'type': p.get('card_details', {}).get('status', 'payment'),\n            'gross_amount': gross,\n            'fee_amount': fees,\n            'net_amount': gross - fees,\n            'currency': amount_money.get('currency'),\n            'occurred_at': p.get('created_at'),\n            'customer_ref': p.get('customer_id', ''),\n            'description': p.get('note', ''),\n            'status': p.get('status')\n        }\n        items_out.append({'json': ledger})\nreturn items_out"
+      }
+    },
+    {
+      "id": "4",
+      "name": "Supabase Upsert",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [800, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "supabase-credentials"
+        }
+      },
+      "parameters": {
+        "operation": "upsert",
+        "table": "ledger_transactions",
+        "columns": "processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status",
+        "values": "={{ Object.values($json).join(',') }}",
+        "schema": "public"
+      }
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request: Square",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request: Square": {
+      "main": [
+        [
+          {
+            "node": "Transform to Ledger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform to Ledger": {
+      "main": [
+        [
+          {
+            "node": "Supabase Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
