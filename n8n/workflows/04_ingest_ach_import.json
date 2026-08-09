@@ -2,97 +2,46 @@
   "name": "Ingest ACH (CSV)",
   "nodes": [
     {
-      "id": "1",
-      "name": "Cron",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
+      "id": "1", "name": "Cron", "type": "n8n-nodes-base.cron", "typeVersion": 1,
       "position": [200, 100],
-      "parameters": {
-        "triggerTimes": {
-          "item": [
-            {
-              "mode": "everyDay",
-              "hour": 2,
-              "minute": 0
-            }
-          ]
-        }
-      }
+      "parameters": {"triggerTimes": {"item": [{"mode": "everyDay", "hour": 2, "minute": 0}]}}
     },
     {
-      "id": "2",
-      "name": "Read CSV",
-      "type": "n8n-nodes-base.readBinaryFile",
-      "typeVersion": 1,
-      "position": [400, 100],
-      "parameters": {
-        "filePath": "/data/ach_imports/today.csv"
-      }
+      "id": "2", "name": "Read CSV", "type": "n8n-nodes-base.readBinaryFile", "typeVersion": 1,
+      "position": [400, 100], "parameters": {"filePath": "/data/ach_imports/today.csv"}
     },
     {
-      "id": "3",
-      "name": "Parse CSV",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
+      "id": "3", "name": "Parse CSV Rows", "type": "n8n-nodes-base.code", "typeVersion": 1,
       "position": [600, 100],
       "parameters": {
         "language": "python",
-        "code": "# Parse CSV from binary input into ledger rows\nimport csv, io\nitems_out = []\n# assume binary data in first item\ncsv_bytes = items[0]['binary']['data']\ncsv_str = csv_bytes.decode('utf-8')\nreader = csv.DictReader(io.StringIO(csv_str))\nfor row in reader:\n    gross = float(row.get('amount'))\n    fees = float(row.get('fee', 0))\n    ledger = {\n        'processor': 'ach',\n        'processor_account_id': 4,\n        'external_id': row.get('transaction_id'),\n        'type': row.get('type'),\n        'gross_amount': gross,\n        'fee_amount': fees,\n        'net_amount': gross - fees,\n        'currency': row.get('currency'),\n        'occurred_at': row.get('date'),\n        'customer_ref': row.get('customer_ref'),\n        'description': row.get('description'),\n        'status': row.get('status')\n    }\n    items_out.append({'json': ledger})\nreturn items_out"
+        "code": "# Parsing only: monetary normalization stays in the reconciliation service.\nimport base64, csv, io\ncsv_bytes = base64.b64decode(items[0]['binary']['data'])\nreader = csv.DictReader(io.StringIO(csv_bytes.decode('utf-8-sig')))\nreturn [{'json': {'raw_record': row}} for row in reader]"
       }
     },
     {
-      "id": "4",
-      "name": "Supabase Upsert",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "id": "4", "name": "Normalize ACH Record", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4,
       "position": [800, 100],
-      "credentials": {
-        "supabaseApi": {
-          "id": "supabase-credentials"
-        }
-      },
       "parameters": {
-        "operation": "upsert",
-        "table": "ledger_transactions",
+        "method": "POST",
+        "url": "={{ $env.RECONCILIATION_ENGINE_URL || 'http://reconciliation-engine:8000' }}/normalize",
+        "sendBody": true, "specifyBody": "json",
+        "jsonBody": "={{ { processor: 'ach', account_id: '4', records: [$json.raw_record] } }}"
+      }
+    },
+    {
+      "id": "5", "name": "Upsert Ledger", "type": "n8n-nodes-base.supabase", "typeVersion": 1,
+      "position": [1000, 100], "credentials": {"supabaseApi": {"id": "supabase-credentials"}},
+      "parameters": {
+        "operation": "upsert", "table": "ledger_transactions", "schema": "public",
         "columns": "processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status",
-        "values": "={{ Object.values($json).join(',') }}",
-        "schema": "public"
+        "values": "={{ [$json.record.source,$json.record.account_id,$json.record.external_id,$json.record.kind,$json.record.gross_amount,$json.record.fee_amount,$json.record.net_amount,$json.record.currency,$json.record.occurred_at,$json.record.reference || '',JSON.stringify($json.record.metadata),'normalized'].join(',') }}"
       }
     }
   ],
   "connections": {
-    "Cron": {
-      "main": [
-        [
-          {
-            "node": "Read CSV",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Read CSV": {
-      "main": [
-        [
-          {
-            "node": "Parse CSV",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse CSV": {
-      "main": [
-        [
-          {
-            "node": "Supabase Upsert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "Cron": {"main": [[{"node": "Read CSV", "type": "main", "index": 0}]]},
+    "Read CSV": {"main": [[{"node": "Parse CSV Rows", "type": "main", "index": 0}]]},
+    "Parse CSV Rows": {"main": [[{"node": "Normalize ACH Record", "type": "main", "index": 0}]]},
+    "Normalize ACH Record": {"main": [[{"node": "Upsert Ledger", "type": "main", "index": 0}]]}
   }
 }

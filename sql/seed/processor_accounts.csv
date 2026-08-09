@@ -1,5 +1,5 @@
-id,processor_id,account_name,credentials_json,created_at
-1,1,Stripe Main,{},2025-12-01
-2,2,PayPal Main,{},2025-12-01
-3,3,Square Register,{},2025-12-01
-4,4,ACH Import,{},2025-12-01
+id,processor_id,account_name,credential_ref,created_at
+1,1,Stripe Main,n8n:stripe-api-credentials,2025-12-01T00:00:00Z
+2,2,PayPal Main,n8n:paypal-api-credentials,2025-12-01T00:00:00Z
+3,3,Square Register,n8n:square-api-credentials,2025-12-01T00:00:00Z
+4,4,ACH Import,n8n:ach-import,2025-12-01T00:00:00Z

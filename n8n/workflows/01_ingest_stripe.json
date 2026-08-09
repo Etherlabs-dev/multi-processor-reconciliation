@@ -7,17 +7,7 @@
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
       "position": [200, 100],
-      "parameters": {
-        "triggerTimes": {
-          "item": [
-            {
-              "mode": "everyDay",
-              "hour": 1,
-              "minute": 0
-            }
-          ]
-        }
-      }
+      "parameters": {"triggerTimes": {"item": [{"mode": "everyDay", "hour": 1, "minute": 0}]}}
     },
     {
       "id": "2",
@@ -25,92 +15,55 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 2,
       "position": [400, 100],
-      "credentials": {
-        "httpBasicAuth": {
-          "id": "stripe-api-credentials"
-        }
-      },
+      "credentials": {"httpBasicAuth": {"id": "stripe-api-credentials"}},
       "parameters": {
         "url": "https://api.stripe.com/v1/balance_transactions",
         "method": "GET",
-        "queryParametersUi": {
-          "parameter": [
-            {
-              "name": "limit",
-              "value": "100"
-            },
-            {
-              "name": "starting_after",
-              "value": "={{ $json[\"cursor\"] || '' }}"
-            }
-          ]
-        }
+        "queryParametersUi": {"parameter": [{"name": "limit", "value": "100"}]}
       }
     },
     {
       "id": "3",
-      "name": "Transform to Ledger",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
+      "name": "Normalize Stripe Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "position": [600, 100],
       "parameters": {
-        "language": "python",
-        "code": "# This node receives the raw Stripe response and converts it into canonical ledger rows\nimport json\nitems_out = []\nfor item in items:\n    data = item.get('response', {}).get('data', [])\n    for event in data:\n        ledger = {\n            'processor': 'stripe',\n            'processor_account_id': 1,  # update accordingly\n            'external_id': event.get('id'),\n            'type': event.get('type'),\n            'gross_amount': float(event.get('amount', 0)) / 100.0,\n            'fee_amount': float(event.get('fee', 0)) / 100.0,\n            'net_amount': float(event.get('net', 0)) / 100.0,\n            'currency': event.get('currency', '').upper(),\n            'occurred_at': event.get('created'),\n            'customer_ref': event.get('source', ''),\n            'description': event.get('description', ''),\n            'status': 'succeeded'\n        }\n        items_out.append({'json': ledger})\nreturn items_out"
+        "method": "POST",
+        "url": "={{ $env.RECONCILIATION_ENGINE_URL || 'http://reconciliation-engine:8000' }}/normalize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { processor: 'stripe', account_id: '1', records: $json.data || [] } }}"
       }
     },
     {
       "id": "4",
-      "name": "Supabase Upsert",
-      "type": "n8n-nodes-base.supabase",
+      "name": "Split Normalized Records",
+      "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [800, 100],
-      "credentials": {
-        "supabaseApi": {
-          "id": "supabase-credentials"
-        }
-      },
+      "parameters": {"fieldToSplitOut": "records", "options": {}}
+    },
+    {
+      "id": "5",
+      "name": "Upsert Ledger",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1000, 100],
+      "credentials": {"supabaseApi": {"id": "supabase-credentials"}},
       "parameters": {
         "operation": "upsert",
         "table": "ledger_transactions",
+        "schema": "public",
         "columns": "processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status",
-        "values": "={{ Object.values($json).join(',') }}",
-        "schema": "public"
+        "values": "={{ [$json.records.source,$json.records.account_id,$json.records.external_id,$json.records.kind,$json.records.gross_amount,$json.records.fee_amount,$json.records.net_amount,$json.records.currency,$json.records.occurred_at,$json.records.reference || '',JSON.stringify($json.records.metadata),'normalized'].join(',') }}"
       }
     }
   ],
   "connections": {
-    "Cron": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request: Stripe",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "HTTP Request: Stripe": {
-      "main": [
-        [
-          {
-            "node": "Transform to Ledger",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Transform to Ledger": {
-      "main": [
-        [
-          {
-            "node": "Supabase Upsert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+    "Cron": {"main": [[{"node": "HTTP Request: Stripe", "type": "main", "index": 0}]]},
+    "HTTP Request: Stripe": {"main": [[{"node": "Normalize Stripe Batch", "type": "main", "index": 0}]]},
+    "Normalize Stripe Batch": {"main": [[{"node": "Split Normalized Records", "type": "main", "index": 0}]]},
+    "Split Normalized Records": {"main": [[{"node": "Upsert Ledger", "type": "main", "index": 0}]]}
   }
 }

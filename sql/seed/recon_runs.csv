@@ -1,2 +1,2 @@
-id,time_window_start,time_window_end,processors_included,stats
-1,2026-01-22,2026-01-25,"['stripe', 'paypal', 'square']",{}
+id,time_window_start,time_window_end,processors_included,input_fingerprint,stats,created_at
+1,2026-01-22T00:00:00Z,2026-01-25T00:00:00Z,"{stripe,paypal,square}",7ee111358a0cc1862899af9e8bb8100fe9e87d09d8d80841f1f6342281b2f652,{},2026-01-25T00:00:00Z

@@ -1,4 +1,4 @@
-id,processor,event_type,external_id,payload_json,created_at
-1,stripe,charge.succeeded,evt_stripe_1,{},2026-01-24
-2,paypal,sale,evt_paypal_1,{},2026-01-24
-3,square,payment,evt_square_1,{},2026-01-24
+id,processor_account_id,processor,event_type,external_id,payload_json,payload_sha256,created_at
+1,1,stripe,charge.succeeded,evt_stripe_1,{},44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a,2026-01-24T00:00:00Z
+2,2,paypal,sale,evt_paypal_1,{},44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a,2026-01-24T00:00:00Z
+3,3,square,payment,evt_square_1,{},44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a,2026-01-24T00:00:00Z

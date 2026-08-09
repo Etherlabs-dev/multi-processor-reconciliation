@@ -21,7 +21,7 @@
     },
     {
       "id": "2",
-      "name": "Query Ledger",
+      "name": "Query Raw Events",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [400, 100],
@@ -32,20 +32,23 @@
       },
       "parameters": {
         "operation": "select",
-        "table": "ledger_transactions",
+        "table": "raw_events",
         "schema": "public",
-        "columns": "id,processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status"
+        "columns": "id,processor,processor_account_id,event_type,external_id,payload_json,created_at"
       }
     },
     {
       "id": "3",
-      "name": "Enrich Transactions",
-      "type": "n8n-nodes-base.code",
+      "name": "Normalize via Engine",
+      "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
       "position": [600, 100],
       "parameters": {
-        "language": "python",
-        "code": "# Example enrichment: ensure net = gross - fees and uppercase currency\nitems_out = []\nfor item in items:\n    gross = float(item['json'].get('gross_amount', 0))\n    fees = float(item['json'].get('fee_amount', 0))\n    net = gross - fees\n    enriched = item['json'].copy()\n    enriched['net_amount'] = round(net, 2)\n    enriched['currency'] = (enriched.get('currency') or '').upper()\n    # dedupe hash could be generated here if desired\n    items_out.append({'json': enriched})\nreturn items_out"
+        "method": "POST",
+        "url": "={{ $env.RECONCILIATION_ENGINE_URL || 'http://reconciliation-engine:8000' }}/normalize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { processor: $json.processor, account_id: String($json.processor_account_id), records: [$json.payload_json] } }}"
       }
     },
     {
@@ -63,8 +66,8 @@
         "operation": "upsert",
         "table": "ledger_transactions",
         "schema": "public",
-        "columns": "id,processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status",
-        "values": "={{ Object.values($json).join(',') }}"
+        "columns": "processor,processor_account_id,external_id,type,gross_amount,fee_amount,net_amount,currency,occurred_at,customer_ref,description,status",
+        "values": "={{ [$json.record.source,$json.record.account_id,$json.record.external_id,$json.record.kind,$json.record.gross_amount,$json.record.fee_amount,$json.record.net_amount,$json.record.currency,$json.record.occurred_at,$json.record.reference || '',JSON.stringify($json.record.metadata), 'normalized'].join(',') }}"
       }
     }
   ],
@@ -73,25 +76,25 @@
       "main": [
         [
           {
-            "node": "Query Ledger",
+            "node": "Query Raw Events",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Query Ledger": {
+    "Query Raw Events": {
       "main": [
         [
           {
-            "node": "Enrich Transactions",
+            "node": "Normalize via Engine",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Enrich Transactions": {
+    "Normalize via Engine": {
       "main": [
         [
           {

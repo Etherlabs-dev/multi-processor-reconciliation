@@ -1,0 +1,22 @@
+{
+  "config": {
+    "ambiguity_delta": "0.03",
+    "amount_tolerance": "0.01",
+    "date_window_days": 3,
+    "max_split_size": 3,
+    "minimum_score": "0.70"
+  },
+  "correct_matches": 6,
+  "duplicate_records": 1,
+  "environment": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "evidence_label": "synthetic",
+  "expected_matches": 6,
+  "false_matches": 0,
+  "input_fingerprint": "99c3127308d0f82dcbfede3ede6e17f04fe10c755e6086af6292410d5857a268",
+  "runtime_ms": 0.6641,
+  "seed": 20260809,
+  "unresolved_records": 7
+}
