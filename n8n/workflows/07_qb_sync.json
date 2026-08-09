@@ -3,100 +3,72 @@
   "nodes": [
     {
       "id": "1",
-      "name": "Cron",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
+      "name": "Approved Journal Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [200, 100],
-      "parameters": {
-        "triggerTimes": {
-          "item": [
-            {
-              "mode": "everyDay",
-              "hour": 5,
-              "minute": 0
-            }
-          ]
+      "webhookId": "approved-accounting-journal",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "accounting-approval-header-auth"
         }
+      },
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approved-accounting-journal",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
       }
     },
     {
       "id": "2",
-      "name": "Load Matches",
-      "type": "n8n-nodes-base.supabase",
+      "name": "Validate Approved Journal",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 1,
-      "position": [400, 100],
-      "credentials": {
-        "supabaseApi": {
-          "id": "supabase-credentials"
-        }
-      },
+      "position": [450, 100],
       "parameters": {
-        "operation": "select",
-        "table": "recon_matches",
-        "schema": "public",
-        "columns": "*",
-        "conditions": "confidence >= 0.99"
+        "language": "python",
+        "code": "# Amounts must come from approved financial records; confidence is never money.\nrequired = ['run_id', 'idempotency_key', 'payload_sha256', 'journal']\nout = []\nfor item in items:\n    row = item['json'].get('body', item['json'])\n    missing = [key for key in required if not row.get(key)]\n    if missing:\n        raise ValueError(f\"Missing approved journal fields: {missing}\")\n    journal = row['journal']\n    if journal.get('debit_total') != journal.get('credit_total'):\n        raise ValueError('Journal is not balanced')\n    out.append({'json': row})\nreturn out"
       }
     },
     {
       "id": "3",
-      "name": "Build Journal Entries",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [600, 100],
-      "parameters": {
-        "language": "python",
-        "code": "# Build a simple QuickBooks journal entry payload per match\nentries = []\nfor m in items:\n    row = m['json']\n    payload = {\n        'clearing_account': f\"{row['left_entity_type'].capitalize()} Clearing\",  # e.g. Transaction Clearing\n        'journal_entry_id': f\"JE{row['id']}\",\n        'totals': row.get('confidence', 1.0) * 100,\n        'posted_at': str($now)\n    }\n    entries.append(payload)\nreturn [{'json': {'entries': entries}}]"
-      }
-    },
-    {
-      "id": "4",
-      "name": "Insert QB Sync Job",
+      "name": "Upsert QB Sync Job",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [800, 100],
+      "position": [700, 100],
       "credentials": {
         "supabaseApi": {
           "id": "supabase-credentials"
         }
       },
       "parameters": {
-        "operation": "insert",
+        "operation": "upsert",
         "table": "qb_sync_jobs",
         "schema": "public",
-        "columns": "run_id,status,qb_payload_json",
-        "values": "={{ 1 }},pending,{{ $json.entries }}"
+        "columns": "run_id,idempotency_key,payload_sha256,status,qb_payload_json",
+        "values": "={{ $json.run_id }},{{ $json.idempotency_key }},{{ $json.payload_sha256 }},pending,{{ $json.journal }}"
       }
     }
   ],
   "connections": {
-    "Cron": {
+    "Approved Journal Webhook": {
       "main": [
         [
           {
-            "node": "Load Matches",
+            "node": "Validate Approved Journal",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Load Matches": {
+    "Validate Approved Journal": {
       "main": [
         [
           {
-            "node": "Build Journal Entries",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build Journal Entries": {
-      "main": [
-        [
-          {
-            "node": "Insert QB Sync Job",
+            "node": "Upsert QB Sync Job",
             "type": "main",
             "index": 0
           }

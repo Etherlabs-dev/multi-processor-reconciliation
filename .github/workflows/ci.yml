@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "portfolio-upgrade/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.10
+        env:
+          POSTGRES_DB: reconciliation
+          POSTGRES_USER: reconciliation
+          POSTGRES_PASSWORD: reconciliation-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reconciliation -d reconciliation"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://reconciliation:reconciliation-test-only@localhost:5432/reconciliation
+      PGPASSWORD: reconciliation-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install ".[dev]"
+      - run: psql -h localhost -U reconciliation -d reconciliation -f sql/schema.sql
+      - run: psql -h localhost -U reconciliation -d reconciliation -f sql/load_seed.sql
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest -q
+      - run: reconciliation-validate-workflows
+      - run: reconciliation-benchmark --output results/synthetic_benchmark-ci.json
+      - run: pip check
+      - run: pip-audit --local
+
+  n8n-import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.22"
+      - run: mkdir -p "$RUNNER_TEMP/n8n-user"
+      - run: npx --yes n8n@2.33.7 import:workflow --separate --input=n8n/workflows
+        env:
+          N8N_USER_FOLDER: ${{ runner.temp }}/n8n-user
+          DB_TYPE: sqlite
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build
+      - run: docker compose run --rm test

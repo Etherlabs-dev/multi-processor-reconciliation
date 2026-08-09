@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16.10
+    environment:
+      POSTGRES_DB: reconciliation
+      POSTGRES_USER: reconciliation
+      POSTGRES_PASSWORD: reconciliation-test-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reconciliation -d reconciliation"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  reconciliation-engine:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://reconciliation:reconciliation-test-only@postgres:5432/reconciliation
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  test:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://reconciliation:reconciliation-test-only@postgres:5432/reconciliation
+      PGPASSWORD: reconciliation-test-only
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql -h postgres -U reconciliation -d reconciliation -f sql/schema.sql
+        psql -h postgres -U reconciliation -d reconciliation -f sql/load_seed.sql
+        ruff check .
+        ruff format --check .
+        pytest -q
+        reconciliation-validate-workflows
+        reconciliation-benchmark

@@ -4,7 +4,7 @@
 
 **Status:** Reference Implementation / Portfolio System  
 **Domain:** Payments · Finance Operations · Reconciliation  
-**Stack:** n8n · PostgreSQL · SQL · API integrations
+**Stack:** Python 3.11 · FastAPI · n8n · PostgreSQL 16 · Docker Compose
 
 This repository demonstrates the architecture and workflow design for a multi-processor reconciliation system. It is intended to show how payment events can be ingested, normalized, matched, reviewed and synchronized without treating n8n itself as the entire engineering story.
 
@@ -71,13 +71,13 @@ The previous README referred to workflow `09`, but no ninth workflow exists in t
 ### Ingestion
 
 - processor-specific source workflows;
-- raw-event preservation;
+- raw-event persistence and hash constraints in the database layer;
 - normalization into a common representation;
 - support for batch ACH import.
 
 ### Reconciliation
 
-The design accounts for multiple matching passes, including:
+The extracted Python engine implements and tests:
 
 - exact/reference matches;
 - date-window tolerance;
@@ -89,10 +89,9 @@ The design accounts for multiple matching passes, including:
 
 ### Accounting and review
 
-- optional QuickBooks journal-sync workflow;
+- approval-gated accounting job workflow artifact;
 - discrepancy / exception notifications;
 - sync-state/idempotency concepts;
-- consolidated cash-position modeling.
 
 ---
 
@@ -101,6 +100,13 @@ The design accounts for multiple matching passes, including:
 ```text
 multi-processor-reconciliation/
 ├── .env.example
+├── .github/workflows/ci.yml
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+├── src/reconciliation/
+├── tests/
+├── results/synthetic_benchmark.json
 ├── sql/
 │   ├── schema.sql
 │   └── seed/
@@ -127,14 +133,13 @@ multi-processor-reconciliation/
 
 The SQL layer is designed around distinct lifecycle stages rather than a single mutable transaction table.
 
-Typical entities include:
+Implemented entities include:
 
 - processor definitions and accounts;
 - append-oriented raw events;
-- normalized transactions;
-- unified ledger entries;
-- match candidates;
-- confirmed matches;
+- normalized ledger transactions;
+- payouts;
+- confirmed matches and explicit exceptions;
 - discrepancies/exceptions;
 - accounting journal records;
 - synchronization state.
@@ -145,7 +150,7 @@ This separation matters because reconciliation needs both **current operational 
 
 ## Matching strategy
 
-A production reconciliation engine should not rely on one equality check. The intended approach is a staged deterministic matcher:
+The reconciliation engine uses a staged deterministic matcher rather than one equality check:
 
 ### Pass 1 — high-confidence exact/reference matching
 
@@ -175,33 +180,43 @@ For financial controls, **false reconciliation can be more damaging than an unre
 
 ### Requirements
 
-- PostgreSQL 14+
-- n8n
+- Python 3.11
+- PostgreSQL 16 (or Docker Compose)
+- n8n 2.33.7 when importing/executing workflows
 - optional processor/accounting credentials for live integrations
 
-### 1. Create the database
+### 1. Install and test
+
+```bash
+python3.11 -m venv .venv
+.venv/bin/pip install ".[dev]"
+.venv/bin/ruff check .
+.venv/bin/pytest -q
+```
+
+### 2. Create and seed the database
 
 The schema in this repository is under `sql/`:
 
 ```bash
 psql "$DATABASE_URL" -f sql/schema.sql
+psql "$DATABASE_URL" -f sql/load_seed.sql
 ```
 
-### 2. Load sample data if required
+The seed records are synthetic demonstration data, not production evidence.
 
-Seed assets are under:
+### 3. Reproduce the full container test
 
-```text
-sql/seed/
+```bash
+docker compose build
+docker compose run --rm test
 ```
 
-They are intended for demonstration and validation, not as production evidence.
-
-### 3. Import workflows
+### 4. Import workflows
 
 Import the eight JSON files from `n8n/workflows/` in numeric order.
 
-### 4. Configure credentials
+### 5. Configure credentials
 
 Use n8n's credential manager and environment configuration. Do not commit live payment or accounting secrets.
 
@@ -214,6 +229,11 @@ Use n8n's credential manager and environment configuration. Do not commit live p
 | Workflow artifacts exist | **Implemented** |
 | SQL/data model exists | **Implemented** |
 | Matching architecture is documented | **Implemented** |
+| Deterministic normalization/matching package | **Implemented and tested** |
+| PostgreSQL schema and seed load | **Tested on PostgreSQL 16** |
+| Cursor/event/accounting replay controls | **Implemented and tested** |
+| Eight workflow exports import in n8n 2.33.7 and contain no secret values | **Tested** |
+| Synthetic matcher benchmark | **6/6 correct expected matches; 0 false; 7 unresolved** |
 | Sample/seed scenarios | **Synthetic / Demonstration** |
 | Live multi-processor client deployment | **Not claimed here** |
 | 40+ hours/month saved | **Modeled outcome, not verified client evidence here** |
@@ -225,30 +245,25 @@ See [`docs/evidence.md`](./docs/evidence.md).
 
 ## Reliability requirements for a production implementation
 
-Before this pattern should be described as production-grade, the system should demonstrate:
+Before this pattern should be described as production-grade, it still needs live evidence for:
 
 - webhook/API authentication and signature verification;
-- incremental cursors/checkpoints;
-- idempotent raw ingestion;
-- unique constraints against duplicate external events;
 - rate-limit and retry handling;
 - dead-letter or failed-event recovery;
-- processor-specific reconciliation tolerances;
-- transactional accounting-sync controls;
-- replay-safe workflow behavior;
 - structured logs and run metrics;
-- automated tests around matching rules;
+- processor-specific tolerance calibration against real statements;
+- end-to-end accounting validation against a target chart of accounts;
 - explicit exception ownership and audit history.
 
 See [`docs/reliability.md`](./docs/reliability.md).
 
 ---
 
-## What should move out of n8n in a stronger implementation
+## Python engine and n8n boundary
 
 n8n is useful for orchestration, scheduling, connectors and human-facing operational flows. The core reconciliation logic becomes stronger portfolio evidence when deterministic business logic is independently testable.
 
-A target architecture should consider moving:
+The execution pass moved these deterministic controls into `src/reconciliation`:
 
 - canonical schemas;
 - match scoring;
@@ -257,19 +272,20 @@ A target architecture should consider moving:
 - idempotency helpers;
 - validation;
 
-into a small Python package/service with unit tests, while n8n remains the orchestration layer.
+The normalization and reconciliation workflows now delegate those rules to the FastAPI service. n8n remains responsible for scheduling, connectors, persistence and notifications. QuickBooks posting is intentionally manual/approval-gated and rejects missing or unbalanced journal payloads; a match score is never treated as a monetary value.
 
-That is the primary engineering upgrade still required for this repository.
+Run `reconciliation-benchmark` for the synthetic benchmark and `reconciliation-validate-workflows` for the offline workflow/security check.
 
 ---
 
 ## Limitations
 
 - Processor JSON workflows are reference artifacts and require credential/configuration review before live use.
+- Source workflows still need durable raw-event writes and compare-and-swap cursor updates wired to their real processor pagination responses.
 - This repository does not independently prove the business-outcome numbers previously described in the README.
-- Matching behavior needs executable automated tests rather than documentation alone.
 - The optional QuickBooks flow requires validation against the target chart of accounts and accounting policy.
 - Multi-currency and settlement behavior must be tested against real processor edge cases before production use.
+- The synthetic benchmark measures deterministic correctness on designed fixtures; it is not a throughput or business-savings claim.
 
 ---
 

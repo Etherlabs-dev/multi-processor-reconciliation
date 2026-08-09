@@ -34,8 +34,8 @@
         "operation": "insert",
         "table": "recon_runs",
         "schema": "public",
-        "columns": "time_window_start,time_window_end,processors_included,stats",
-        "values": "={{ $today.minus(days=1).toISO() }},{{ $today.toISO() }},{{ ['stripe','paypal','square','ach'] }},{}"
+        "columns": "time_window_start,time_window_end,processors_included,input_fingerprint,stats",
+        "values": "={{ $today.minus(days=1).toISO() }},{{ $today.toISO() }},{{ ['stripe','paypal','square','ach'] }},{{ $('Reconcile via Engine').first().json.input_fingerprint }},{{ $('Reconcile via Engine').first().json.stats }}"
       }
     },
     {
@@ -78,13 +78,16 @@
     },
     {
       "id": "5",
-      "name": "Match & Create Exceptions",
-      "type": "n8n-nodes-base.code",
+      "name": "Reconcile via Engine",
+      "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 1,
       "position": [650, 160],
       "parameters": {
-        "language": "python",
-        "code": "# Match transactions to payouts and emit recon_matches and recon_exceptions\nimport uuid\nrun_id = {{$node[\"Create Recon Run\"].json[\"id\"] if $node[\"Create Recon Run\"].json else 1}}\ntxns = $items(2)  # transactions\npayouts = $items(3)  # payouts\nmatches = []\nexceptions = []\n# very simple matching: net amount must equal payout amount (per processor)\nfor t in txns:\n    matched = False\n    for p in payouts:\n        if t['json']['processor'] == p['json']['processor'] and abs(t['json']['net_amount'] - p['json']['payout_amount']) < 0.01:\n            matches.append({\n                'run_id': run_id,\n                'left_entity_type': 'transaction',\n                'left_entity_id': t['json']['id'],\n                'right_entity_type': 'payout',\n                'right_entity_id': p['json']['external_id'],\n                'confidence': 1.0,\n                'reason': 'Exact net match'\n            })\n            matched = True\n            break\n    if not matched:\n        exceptions.append({\n            'run_id': run_id,\n            'exception_type': 'unmatched_transaction',\n            'severity': 'high',\n            'entity_ref': t['json']['id'],\n            'details_json': {'message': 'No matching payout found'}\n        })\nreturn [{'json': {'matches': matches, 'exceptions': exceptions}}]"
+        "method": "POST",
+        "url": "={{ $env.RECONCILIATION_ENGINE_URL || 'http://reconciliation-engine:8000' }}/reconcile",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { left: $items('Load Transactions').map(i => i.json), right: $items('Load Payouts').map(i => ({ processor: i.json.processor, processor_account_id: i.json.processor_account_id, external_id: i.json.external_id, kind: 'payout', gross_amount: i.json.payout_amount, fee_amount: 0, net_amount: i.json.payout_amount, currency: i.json.currency, occurred_at: i.json.payout_date })) } }}"
       }
     },
     {
@@ -99,11 +102,11 @@
         }
       },
       "parameters": {
-        "operation": "insert",
+        "operation": "upsert",
         "table": "recon_matches",
         "schema": "public",
-        "columns": "run_id,left_entity_type,left_entity_id,right_entity_type,right_entity_id,confidence,reason",
-        "values": "={{ $json.matches.map(m => `${m.run_id},${m.left_entity_type},${m.left_entity_id},${m.right_entity_type},${m.right_entity_id},${m.confidence},${m.reason}`).join(';') }}"
+        "columns": "run_id,match_key,left_entity_type,left_entity_id,right_entity_type,right_entity_id,confidence,reason",
+        "values": "={{ $('Reconcile via Engine').first().json.matches.map(m => `${$('Create Recon Run').first().json.id},${m.left_ids.join('+')}::${m.right_ids.join('+')},transaction,${m.left_ids.join('+')},payout,${m.right_ids.join('+')},${m.score},${m.classification}`).join(';') }}"
       }
     },
     {
@@ -118,11 +121,11 @@
         }
       },
       "parameters": {
-        "operation": "insert",
+        "operation": "upsert",
         "table": "recon_exceptions",
         "schema": "public",
         "columns": "run_id,exception_type,severity,entity_ref,details_json",
-        "values": "={{ $json.exceptions.map(e => `${e.run_id},${e.exception_type},${e.severity},${e.entity_ref},${JSON.stringify(e.details_json)}`).join(';') }}"
+        "values": "={{ $('Reconcile via Engine').first().json.discrepancies.map(e => `${$('Create Recon Run').first().json.id},${e.classification},medium,${e.record_ids.join('+')},${JSON.stringify(e.details || {})}`).join(';') }}"
       }
     }
   ],
@@ -131,28 +134,7 @@
       "main": [
         [
           {
-            "node": "Create Recon Run",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Load Transactions",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Load Payouts",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create Recon Run": {
-      "main": [
-        [
-          {
-            "node": "Match & Create Exceptions",
             "type": "main",
             "index": 0
           }
@@ -163,9 +145,9 @@
       "main": [
         [
           {
-            "node": "Match & Create Exceptions",
+            "node": "Load Payouts",
             "type": "main",
-            "index": 1
+            "index": 0
           }
         ]
       ]
@@ -174,14 +156,25 @@
       "main": [
         [
           {
-            "node": "Match & Create Exceptions",
+            "node": "Reconcile via Engine",
             "type": "main",
-            "index": 2
+            "index": 0
           }
         ]
       ]
     },
-    "Match & Create Exceptions": {
+    "Reconcile via Engine": {
+      "main": [
+        [
+          {
+            "node": "Create Recon Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Recon Run": {
       "main": [
         [
           {

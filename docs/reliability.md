@@ -91,9 +91,9 @@ A production system should expose:
 - accounting-sync success/failure;
 - workflow duration and error rate.
 
-## Recommended acceptance tests
+## Executed acceptance tests
 
-Before presenting this as a tested production-style system, create fixtures for at least:
+The automated suite now includes fixtures for:
 - exact match;
 - date-tolerance match;
 - fee-aware match;
@@ -107,4 +107,4 @@ Before presenting this as a tested production-style system, create fixtures for 
 - retry/replay idempotency;
 - accounting-sync replay.
 
-The strongest portfolio version should move the deterministic matching rules into a testable Python package/service and use n8n primarily for orchestration.
+The suite also validates malformed monetary/currency/identifier inputs, deterministic ordering/fingerprints, stale cursor rejection, atomic failed batches, database uniqueness and balanced accounting entries. These tests establish repository behavior; they do not establish live processor or QuickBooks reliability.

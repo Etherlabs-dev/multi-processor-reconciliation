@@ -1,203 +1,75 @@
 # Architecture
 
-This document explains the architecture for **Multi‑Processor Payment Reconciliation** built with **n8n + PostgreSQL** (portable to Supabase or any Postgres provider) and **Python** inside n8n Code nodes.
-
----
-
-## Goal
-
-Provide a repeatable daily reconciliation pipeline that:
-
-* Pulls transactions + payouts from **Stripe**, **PayPal**, **Square**, and **ACH/bank** sources
-* Normalizes everything into a **canonical ledger**
-* Runs an **auditable matching engine**
-* Produces a **discrepancy / exception queue** for finance review
-* (Optional) Pushes **QuickBooks Online** journal entries using **clearing accounts**
-* Computes **cash position** across all processors
-
----
+The repository uses a deliberately narrow service boundary: deterministic financial rules live in a Python 3.11 package, PostgreSQL is the durable audit/control layer, and n8n remains the integration orchestrator.
 
 ## Components
 
-### 1) Orchestration layer: n8n
+### Python reconciliation engine
 
-n8n is the workflow engine that:
+`src/reconciliation` owns independently testable logic for:
 
-* schedules daily runs (Cron)
-* calls APIs (HTTP Request)
-* performs transformations (Python Code nodes)
-* writes results to Postgres (Postgres / Supabase nodes)
-* sends alerts (Slack/Email)
+- processor-specific normalization using `Decimal` and UTC timestamps;
+- currency/type/date/amount candidate eligibility;
+- explainable candidate scores and ambiguity controls;
+- fee-aware, refund, partial-refund and bounded split classifications;
+- deterministic input fingerprints;
+- cursor/event replay behavior and accounting idempotency semantics.
 
-**Design principle:** modular workflows, each with a single responsibility.
+FastAPI exposes `/normalize`, `/reconcile` and `/health` so workflows do not need to duplicate these rules. The reference in-memory idempotency objects define behavior; PostgreSQL constraints and compare-and-swap cursor updates provide durable enforcement.
 
-### 2) Data layer: PostgreSQL
+### n8n orchestration
 
-Postgres is the source of truth:
+Eight committed workflows cover Stripe, PayPal, Square and ACH ingestion, normalization, reconciliation, accounting preparation and exception notifications. n8n owns schedules, API connectors, credential references, database calls and notifications. Workflows 01 through 06 delegate financial normalization or matching to the Python engine; their remaining Code nodes only parse transport formats or validate approved input.
 
-* raw payload storage for audit (`raw_events`)
-* normalized canonical transactions (`normalized_transactions`)
-* unified ledger view (`unified_ledger`)
-* reconciliation objects (`match_candidates`, `matches`, `discrepancies`)
-* sync tracking for idempotency (`sync_state`, `qbo_journal_entries`)
+Workflow 07 no longer derives monetary totals from a confidence score. It accepts only an explicitly approved journal payload with a stable idempotency key and equal debit/credit totals. Live QuickBooks posting remains an integration step that requires an organization-specific chart of accounts and accounting approval.
 
-**Design principle:** keep reconciliation *reproducible* (same inputs → same outputs).
+### PostgreSQL
 
-### 3) Matching logic layer: Python inside n8n
+The schema stores processor/account references, one checkpoint per account, raw-event hashes, canonical ledger transactions, payouts, reconciliation runs/matches/exceptions, accounting jobs and balanced posting evidence.
 
-Python nodes implement deterministic matching:
+Important enforced controls include:
 
-* exact matches (external refs / ids)
-* net vs gross reconciliation (fee-aware)
-* refund linking (refund → original)
-* split payment grouping (sum of parts ≈ expected)
-* candidate scoring & thresholding
+- unique raw events per account/type/external ID;
+- unique ledger transactions and payouts per account/external ID;
+- uppercase three-letter currencies and non-negative fees;
+- immutable run fingerprints and replay-safe match/exception keys;
+- one accounting job per idempotency key;
+- balanced journal debit and credit totals;
+- versioned checkpoints for compare-and-swap cursor advancement.
 
-**Design principle:** explainable rules before ML.
-
-### 4) Accounting sync (optional): QuickBooks Online
-
-If enabled:
-
-* journals are generated from settlement/payout events
-* processor clearing accounts are used to avoid double counting
-* sync is idempotent (don’t post the same journal twice)
-
----
+Credential values do not belong in PostgreSQL or workflow exports. `processor_accounts.credential_ref` stores only an external credential-manager reference.
 
 ## Data flow
 
-### A) Ingestion phase
+```text
+processor APIs / ACH
+        │
+        ▼
+n8n source connectors
+        │
+        ▼
+Python /normalize ──► ledger_transactions + payouts
+        │
+        ▼
+Python /reconcile ──► recon_runs + matches + exceptions
+        │                              │
+        │                              └──► notifications / review
+        ▼
+approved balanced journal ──► replay-safe accounting job
+```
 
-Each processor has its own workflow.
+The database and Python reference primitives implement raw-event hashes, duplicate suppression and checkpoint compare-and-swap behavior. Wiring each processor's real pagination response into durable `raw_events` and `sync_state` writes remains an explicit production integration gap; the workflow artifacts must not be presented as proving that live behavior.
 
-**Inputs**
+## Safety choices
 
-* Stripe API
-* PayPal API
-* Square API
-* ACH feed (CSV import or bank feed)
+- Currency, record type, amount tolerance and date windows are hard eligibility controls.
+- Close top candidates remain unresolved; the engine does not force the highest score.
+- Split matching is bounded to groups of two through five (three by default).
+- Duplicate inputs are reported and excluded from matching.
+- Fingerprints are independent of input ordering.
+- Cursor advancement rejects stale workers, and malformed batches do not mutate state.
+- Reusing an accounting idempotency key with different content is a conflict.
 
-**Outputs**
+## Known production gaps
 
-* raw events saved to `raw_events`
-* normalized transactions saved to `normalized_transactions`
-* payouts/settlements saved to `payouts` (or equivalent)
-* cursors updated in `sync_state`
-
-**Key guarantees**
-
-* incremental sync (cursor-based)
-* idempotent writes (unique constraints)
-* raw payload persistence
-
-### B) Normalization → unified ledger
-
-A ledger builder workflow standardizes all transactions into one consistent structure.
-
-**Output table:** `unified_ledger`
-
-Common fields include:
-
-* processor / account
-* transaction type (charge, refund, payout, fee)
-* gross, fee, net
-* currency + base currency conversion
-* occurred_at / settled_at
-
-### C) Matching engine
-
-Runs multi-pass matching and produces:
-
-* `match_candidates` (possible links + score)
-* `matches` (accepted matches)
-* `discrepancies` (exceptions requiring review)
-
-### D) Exception queue + notifications
-
-Discrepancies are triaged into a review queue.
-
-Examples:
-
-* unmatched payout
-* unmatched transaction
-* fee mismatch
-* duplicate suspected
-* currency inconsistency
-
-Notifications:
-
-* daily digest (Slack/email)
-* severity thresholds
-
-### E) Accounting sync (optional)
-
-If QuickBooks is enabled:
-
-* generate journal entries per settlement window
-* post to QBO
-* record journal id + sync metadata
-
----
-
-## Clearing account model (QuickBooks)
-
-To avoid double counting:
-
-* **Do not** book each processor charge directly to your bank account.
-* Book activity into a **processor clearing account** (e.g., "Stripe Clearing").
-* When payout hits the bank, move balance from clearing → bank and book fees.
-
-Typical journal per payout:
-
-* **Debit** Bank (net payout)
-* **Debit** Merchant Fees (fees)
-* **Credit** Processor Clearing (gross)
-
----
-
-## Idempotency & constraints
-
-Recommended constraints:
-
-* `raw_events`: `(processor, event_type, external_id)` unique
-* normalized txns: `(processor_account_id, external_id)` unique
-* payouts: `(processor_account_id, external_id)` unique
-* matches: `(run_id, left_id, right_id)` unique (or hash)
-* qbo journals: `(processor_account_id, payout_external_id)` unique
-
----
-
-## Operational guidance
-
-### Scheduling
-
-Typical daily schedule:
-
-1. Ingest Stripe
-2. Ingest PayPal
-3. Ingest Square
-4. Import ACH
-5. Build Unified Ledger
-6. Run Matching
-7. Generate Exceptions
-8. Sync QBO (optional)
-9. Snapshot Cash Position
-
-### Observability
-
-At minimum track:
-
-* ingestion counts per processor
-* number of matches vs discrepancies
-* sum(net) vs sum(payouts) deltas
-* QBO sync success/failure
-
-### Tuning knobs
-
-* date window tolerance (± days)
-* amount tolerance (± cents)
-* scoring weights
-* match threshold
-
----
+This is a tested reference implementation, not a verified live deployment. Production adoption still requires processor webhook verification, API pagination/retry/dead-letter behavior, durable service adapters, monitoring, exception ownership, real statement calibration, and end-to-end accounting acceptance.

@@ -1,0 +1,13 @@
+\set ON_ERROR_STOP on
+\copy processors FROM 'sql/seed/processors.csv' WITH (FORMAT csv, HEADER true)
+\copy processor_accounts FROM 'sql/seed/processor_accounts.csv' WITH (FORMAT csv, HEADER true)
+\copy sync_state FROM 'sql/seed/sync_state.csv' WITH (FORMAT csv, HEADER true)
+\copy raw_events FROM 'sql/seed/raw_events.csv' WITH (FORMAT csv, HEADER true)
+\copy ledger_transactions FROM 'sql/seed/ledger_transactions.csv' WITH (FORMAT csv, HEADER true)
+\copy ledger_links FROM 'sql/seed/ledger_links.csv' WITH (FORMAT csv, HEADER true)
+\copy payouts FROM 'sql/seed/payouts.csv' WITH (FORMAT csv, HEADER true)
+\copy recon_runs FROM 'sql/seed/recon_runs.csv' WITH (FORMAT csv, HEADER true)
+\copy recon_matches FROM 'sql/seed/recon_matches.csv' WITH (FORMAT csv, HEADER true)
+\copy recon_exceptions FROM 'sql/seed/recon_exceptions.csv' WITH (FORMAT csv, HEADER true)
+\copy qb_sync_jobs FROM 'sql/seed/qb_sync_jobs.csv' WITH (FORMAT csv, HEADER true)
+\copy qb_postings FROM 'sql/seed/qb_postings.csv' WITH (FORMAT csv, HEADER true)

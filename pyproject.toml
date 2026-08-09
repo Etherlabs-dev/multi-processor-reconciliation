@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools==83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multi-processor-reconciliation"
+version = "0.2.0"
+description = "Deterministic, replay-safe payment reconciliation engine"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = "MIT"
+authors = [{name = "Ugo Chukwu / Etherlabs"}]
+dependencies = [
+  "fastapi==0.141.1",
+  "pydantic==2.13.4",
+  "uvicorn==0.52.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pip-audit==2.10.0",
+  "psycopg[binary]==3.3.4",
+  "pytest==9.0.3",
+  "ruff==0.15.1",
+  "setuptools==83.0.0",
+]
+
+[project.scripts]
+reconciliation-benchmark = "reconciliation.benchmark:main"
+reconciliation-validate-workflows = "reconciliation.workflow_validation:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["postgres: requires a live PostgreSQL DATABASE_URL"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

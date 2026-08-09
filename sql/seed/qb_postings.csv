@@ -1,2 +1,1 @@
-id,clearing_account,journal_entry_id,totals,posted_at
-1,Stripe Clearing,JE001,97.1,2026-01-25
+id,sync_job_id,clearing_account,journal_entry_id,debit_total,credit_total,currency,posted_at

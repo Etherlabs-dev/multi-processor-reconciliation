@@ -1,2 +1,2 @@
-id,run_id,exception_type,severity,entity_ref,details_json
-1,1,unmatched_transaction,high,6a165013-f471-4561-b011-35bbc85159e9,"{""message"": ""No matching payout found""}"
+id,run_id,exception_type,severity,entity_ref,details_json,resolved_at
+1,1,unmatched_transaction,high,6a165013-f471-4561-b011-35bbc85159e9,"{""message"": ""No matching payout found""}",

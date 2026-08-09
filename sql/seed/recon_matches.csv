@@ -1,2 +1,2 @@
-id,run_id,left_entity_type,left_entity_id,right_entity_type,right_entity_id,confidence,reason
-1,1,transaction,4e9ae242-12b0-4864-abcd-465b13bb3e8d,payout,po_stripe_1,1.0,Exact match
+id,run_id,match_key,left_entity_type,left_entity_id,right_entity_type,right_entity_id,confidence,reason
+1,1,transaction:payout:stripe-1,transaction,4e9ae242-12b0-4864-abcd-465b13bb3e8d,payout,po_stripe_1,1.0000,Exact reference match

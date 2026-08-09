@@ -24,9 +24,19 @@ This repository is a **reference implementation** for multi-processor payment re
 - accounting-sync workflow artifact
 - exception notification workflow
 - architecture documentation
+- Python 3.11 reconciliation package and FastAPI boundary
+- deterministic fingerprints and replay/idempotency primitives
+- PostgreSQL uniqueness, balance, currency and cursor-version constraints
+
+### Tested
+- 38 automated tests with a real PostgreSQL 16 instance
+- normalization, exact/date/fee/refund/partial/split/ambiguous/missing/duplicate/currency cases
+- stale cursor, malformed batch, duplicate-event and accounting replay behavior
+- schema creation, all seed imports and key database constraints
+- successful import of all eight exports in n8n 2.33.7 plus an offline structural/secret scan
 
 ### Synthetic / demonstration
-Seed data and example transactions can demonstrate matching behavior, but they are not proof of real-world business impact.
+Seed data and the committed benchmark are synthetic. The independently executed synthetic benchmark contains six expected match groups: all six were correct, zero false matches were produced, and seven deliberately ambiguous/missing/currency-mismatched records remained unresolved. Runtime is machine-specific and is recorded as diagnostic evidence only.
 
 ### Not established by this repository alone
 - 40+ hours/month actually saved for a real finance team
@@ -35,4 +45,4 @@ Seed data and example transactions can demonstrate matching behavior, but they a
 - live QuickBooks accounting correctness
 - production uptime/SLA
 
-Any future benchmark should state the dataset, number of transactions, discrepancy mix, expected matches, actual matches, false-match rate, unresolved rate and runtime.
+See `results/synthetic_benchmark.json` for configuration, environment, fingerprint and runtime provenance. It does not claim business savings, production throughput or client outcomes.
