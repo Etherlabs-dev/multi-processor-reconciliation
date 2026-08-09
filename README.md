@@ -1,360 +1,282 @@
-# Multi-Processor Payment Reconciliation (n8n + Postgres)
+# Multi-Processor Payment Reconciliation
 
-Automate daily payment reconciliation across **Stripe**, **PayPal**, **Square**, and **Bank ACH** into a unified ledger, with intelligent matching (fees/refunds/splits/currency), discrepancy flagging, and optional **QuickBooks Online** journal sync.
+> Reference architecture for reconciling Stripe, PayPal, Square and ACH transactions into a canonical ledger with matching, discrepancy handling and optional accounting sync.
 
-> Built as **Solution #7** in my *30-Day Financial Automation Build Challenge*: production-grade financial ops automations built in **n8n + Postgres + Python** (inside n8n code nodes).
+**Status:** Reference Implementation / Portfolio System  
+**Domain:** Payments · Finance Operations · Reconciliation  
+**Stack:** n8n · PostgreSQL · SQL · API integrations
 
----
+This repository demonstrates the architecture and workflow design for a multi-processor reconciliation system. It is intended to show how payment events can be ingested, normalized, matched, reviewed and synchronized without treating n8n itself as the entire engineering story.
 
-## Why this exists
-
-Teams running multiple processors typically spend **10–20 hours/week** manually matching transactions to accounting.
-That manual work creates:
-
-* missed transactions
-* duplicate postings
-* fee mismatch confusion
-* delayed cash visibility
-
-This project gives you a repeatable, open-source reconciliation pipeline you can run daily.
+It is **not presented as a verified client deployment**. Time-savings and error-reduction figures should be treated as modeled business outcomes unless separately evidenced.
 
 ---
 
-## What it does
+## Problem
 
-### Core capabilities
+Finance teams operating across multiple processors often need to reconcile:
 
-* **Daily auto-pull** from Stripe, PayPal, Square, and ACH sources
-* **Unified transaction ledger** (normalized schema across processors)
-* **Intelligent matching engine**
+- processor transactions;
+- payouts and settlement timing;
+- refunds and reversals;
+- processor fees;
+- ACH/bank records;
+- accounting journal entries.
 
-  * refunds
-  * partial / split payments
-  * fee variations
-  * settlement vs auth timing
-  * currency conversion (via FX table)
-* **Discrepancy detection**
-
-  * missing transactions
-  * duplicates
-  * fee mismatches
-  * unmatched items (ledger vs books)
-* **Exception queue** for finance review
-* **(Optional) QuickBooks Online sync**
-
-  * auto-create journal entries
-  * track sync state + idempotency
-* **Real-time cash position**
-
-  * per processor account
-  * consolidated view
-
-### Intended outcomes
-
-* Save **40+ hours/month**
-* Reduce reconciliation errors by **~90%**
-* Get reliable cash visibility across processors
+The difficult part is not merely pulling APIs. The system needs a canonical transaction model, idempotent ingestion, deterministic matching, explicit exception handling and an audit trail.
 
 ---
 
-## High-level architecture
+## System flow
 
-```
-┌──────────────┐     ┌──────────────┐
-│ Stripe API    │     │ PayPal API    │
-└──────┬────────┘     └──────┬────────┘
-       │                     │
-       │                     │
-┌──────▼────────┐     ┌──────▼────────┐
-│ Square API     │     │ Bank / ACH     │
-└──────┬────────┘     └──────┬────────┘
-       │                     │
-       └──────────┬──────────┘
-                  │
-          ┌───────▼────────┐
-          │ n8n Ingestion    │  (pagination, rate limits, retries)
-          └───────┬────────┘
-                  │
-          ┌───────▼────────┐
-          │ Postgres         │
-          │ - raw_events      │
-          │ - normalized txns │
-          │ - unified_ledger  │
-          │ - matches/errors  │
-          └───────┬────────┘
-                  │
-          ┌───────▼────────┐
-          │ n8n Matching     │ (Python code nodes)
-          └───────┬────────┘
-                  │
-          ┌───────▼────────┐
-          │ Exceptions Queue │ → Slack/Email + dashboard
-          └───────┬────────┘
-                  │
-          ┌───────▼────────┐
-          │ QBO Sync (opt.)  │ → journals + sync_state
-          └──────────────────┘
+```text
+Stripe ─────┐
+PayPal ─────┤
+Square ─────┼──→ ingestion workflows
+ACH import ─┘           ↓
+                    raw events
+                         ↓
+                 normalize + enrich
+                         ↓
+                  canonical ledger
+                         ↓
+                   matching engine
+                  ↙              ↘
+              matched          exceptions
+                 ↓                 ↓
+          accounting sync     review / alerts
+                 ↓
+          cash-position view
 ```
 
+### Implemented workflow artifacts
+
+The repository currently contains eight n8n workflows:
+
+1. `01_ingest_stripe.json`
+2. `02_ingest_paypal.json`
+3. `03_ingest_square.json`
+4. `04_ingest_ach_import.json`
+5. `05_normalize_enrich.json`
+6. `06_reconcile_match_engine.json`
+7. `07_qb_sync.json`
+8. `08_exception_notifications.json`
+
+The previous README referred to workflow `09`, but no ninth workflow exists in the repository. This upgrade corrects the documentation to match the actual artifact set.
+
 ---
 
-## Repo structure
+## Core capabilities represented in the design
 
-```
-.
-├─ sql/
-│  ├─ schema.sql
-│  ├─ seed/
-│  │  ├─ processors.csv
-│  │  ├─ processor_accounts.csv
-│  │  ├─ fx_rates.csv
-│  │  ├─ raw_events.csv
-│  │  ├─ normalized_transactions.csv
-│  │  ├─ unified_ledger.csv
-│  │  ├─ match_candidates.csv
-│  │  ├─ matches.csv
-│  │  ├─ discrepancies.csv
-│  │  └─ qbo_journal_entries.csv
-│
-├─ n8n/
-│  ├─ workflows/
-│  │  ├─ 01_ingest_stripe.json
-│  │  ├─ 02_ingest_paypal.json
-│  │  ├─ 03_ingest_square.json
-│  │  ├─ 04_ingest_ach_import.json
-│  │  ├─ 05_normalize_enrich.json
-│  │  ├─ 06_reconcile_match_engine.json
-│  │  ├─ 07_qb_sync.json
-│  │  └─ 08_exception_notifications.json
-│
+### Ingestion
+
+- processor-specific source workflows;
+- raw-event preservation;
+- normalization into a common representation;
+- support for batch ACH import.
+
+### Reconciliation
+
+The design accounts for multiple matching passes, including:
+
+- exact/reference matches;
+- date-window tolerance;
+- fee-aware comparisons;
+- refund/reversal relationships;
+- partial or split-payment handling;
+- scored candidate selection;
+- unmatched-item exception handling.
+
+### Accounting and review
+
+- optional QuickBooks journal-sync workflow;
+- discrepancy / exception notifications;
+- sync-state/idempotency concepts;
+- consolidated cash-position modeling.
+
+---
+
+## Repository structure
+
+```text
+multi-processor-reconciliation/
+├── .env.example
+├── sql/
+│   ├── schema.sql
+│   └── seed/
+├── n8n/
+│   └── workflows/
+│       ├── 01_ingest_stripe.json
+│       ├── 02_ingest_paypal.json
+│       ├── 03_ingest_square.json
+│       ├── 04_ingest_ach_import.json
+│       ├── 05_normalize_enrich.json
+│       ├── 06_reconcile_match_engine.json
+│       ├── 07_qb_sync.json
+│       └── 08_exception_notifications.json
 ├── docs/
 │   ├── architecture.md
-│   └─ screenshots/
-│
-└── .env.example                  # Template for environment variables (API keys, DB connection, etc.)
-├─ LICENSE
-└─ README.md
+│   └── screenshots/
+├── README.md
+└── LICENSE
 ```
+
+---
+
+## Database model
+
+The SQL layer is designed around distinct lifecycle stages rather than a single mutable transaction table.
+
+Typical entities include:
+
+- processor definitions and accounts;
+- append-oriented raw events;
+- normalized transactions;
+- unified ledger entries;
+- match candidates;
+- confirmed matches;
+- discrepancies/exceptions;
+- accounting journal records;
+- synchronization state.
+
+This separation matters because reconciliation needs both **current operational state** and **historical auditability**.
+
+---
+
+## Matching strategy
+
+A production reconciliation engine should not rely on one equality check. The intended approach is a staged deterministic matcher:
+
+### Pass 1 — high-confidence exact/reference matching
+
+Compare stable external identifiers, processor account, currency and expected amount where those values are available.
+
+### Pass 2 — tolerance-aware matching
+
+Allow controlled settlement-date and fee differences while preserving explicit tolerances.
+
+### Pass 3 — refund/reversal relationships
+
+Link reversals and partial refunds back to the originating transaction.
+
+### Pass 4 — split/partial settlement handling
+
+Evaluate groups of records where multiple lines may reconcile to one expected amount.
+
+### Pass 5 — exception queue
+
+Anything below the acceptance threshold remains reviewable rather than being silently forced into a match.
+
+For financial controls, **false reconciliation can be more damaging than an unresolved exception**. The system should therefore prefer explicit review over unjustified certainty.
 
 ---
 
 ## Quick start
 
-### 1) Requirements
+### Requirements
 
-* **Postgres 14+** (local, Supabase, Railway, RDS—anything Postgres)
-* **n8n** (self-hosted or n8n cloud)
-* Optional integrations:
+- PostgreSQL 14+
+- n8n
+- optional processor/accounting credentials for live integrations
 
-  * Stripe API credentials
-  * PayPal API credentials
-  * Square API credentials
-  * QuickBooks Online (OAuth app)
+### 1. Create the database
 
-### 2) Create the database
-
-Run the schema:
+The schema in this repository is under `sql/`:
 
 ```bash
-psql "$DATABASE_URL" -f db/schema.sql
+psql "$DATABASE_URL" -f sql/schema.sql
 ```
 
-### 3) Load seed/test data (optional)
+### 2. Load sample data if required
 
-If you want a demo quickly, import the CSVs under `db/seed/` into their matching tables.
+Seed assets are under:
 
-> Tip: If you’re using **n8n Tables**, you can upload the CSVs directly there as well.
+```text
+sql/seed/
+```
 
-### 4) Configure environment variables
+They are intended for demonstration and validation, not as production evidence.
 
-Copy `.env.example` → `.env` and set values.
+### 3. Import workflows
 
-Key variables:
+Import the eight JSON files from `n8n/workflows/` in numeric order.
 
-* `DATABASE_URL`
-* `N8N_BASE_URL` (optional)
+### 4. Configure credentials
 
-Processor API creds (optional for live pulls):
-
-* `STRIPE_SECRET_KEY`
-* `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`
-* `SQUARE_ACCESS_TOKEN`
-
-QuickBooks Online (optional):
-
-* `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`, `QBO_REALM_ID`
-* `QBO_REFRESH_TOKEN` (or use n8n OAuth2 credential)
-
-### 5) Import n8n workflows
-
-In n8n:
-
-* Go to **Workflows → Import from File**
-* Import workflows from `n8n/workflows/` in order (01 → 09)
-
-### 6) Run the demo flow
-
-1. Run **01–04** to ingest (or just load seed data)
-2. Run **05** to build the unified ledger
-3. Run **06** to generate match candidates + matches
-4. Run **07** to create discrepancy queue
-5. (Optional) Run **08** to sync journals to QBO
-6. Run **09** to compute cash position snapshot
+Use n8n's credential manager and environment configuration. Do not commit live payment or accounting secrets.
 
 ---
 
-## How matching works (summary)
+## Evidence standard
 
-This project uses a multi-pass reconciliation strategy:
+| Claim type | Current status |
+|---|---|
+| Workflow artifacts exist | **Implemented** |
+| SQL/data model exists | **Implemented** |
+| Matching architecture is documented | **Implemented** |
+| Sample/seed scenarios | **Synthetic / Demonstration** |
+| Live multi-processor client deployment | **Not claimed here** |
+| 40+ hours/month saved | **Modeled outcome, not verified client evidence here** |
+| ~90% error reduction | **Modeled outcome, not verified client evidence here** |
 
-1. **Exact match pass**
-
-   * same processor account
-   * same currency
-   * amount within tolerance (configurable)
-   * date window (e.g., ±2 days)
-   * same external reference (when available)
-
-2. **Fee-aware pass**
-
-   * gross vs net normalization
-   * fee computed and compared to expected range
-
-3. **Refund & reversal pass**
-
-   * links refunds to original charge
-   * handles partial refunds
-
-4. **Split / partial payment pass**
-
-   * groups multiple ledger lines that sum to expected amount
-
-5. **Scoring + best-candidate selection**
-
-   * each candidate match gets a score
-   * highest score wins (if above threshold)
-   * everything else becomes an exception
-
-Full details: `docs/matching-logic.md`
+See [`docs/evidence.md`](./docs/evidence.md).
 
 ---
 
-## Database model (overview)
+## Reliability requirements for a production implementation
 
-The schema is designed for:
+Before this pattern should be described as production-grade, the system should demonstrate:
 
-* **raw ingestion** (append-only)
-* **normalization** (one row per canonical transaction)
-* **ledger** (unified view for matching)
-* **matching + discrepancies** (auditable reconciliation)
-* **sync tracking** (idempotent journal creation)
+- webhook/API authentication and signature verification;
+- incremental cursors/checkpoints;
+- idempotent raw ingestion;
+- unique constraints against duplicate external events;
+- rate-limit and retry handling;
+- dead-letter or failed-event recovery;
+- processor-specific reconciliation tolerances;
+- transactional accounting-sync controls;
+- replay-safe workflow behavior;
+- structured logs and run metrics;
+- automated tests around matching rules;
+- explicit exception ownership and audit history.
 
-Key tables:
-
-* `processors`, `processor_accounts`
-* `raw_events`
-* `normalized_transactions`
-* `unified_ledger`
-* `match_candidates`, `matches`
-* `discrepancies`
-* `qbo_journal_entries`, `sync_state`
-
-See: `db/schema.sql`
+See [`docs/reliability.md`](./docs/reliability.md).
 
 ---
 
-## n8n workflows
+## What should move out of n8n in a stronger implementation
 
-Each workflow is modular and can be run independently.
+n8n is useful for orchestration, scheduling, connectors and human-facing operational flows. The core reconciliation logic becomes stronger portfolio evidence when deterministic business logic is independently testable.
 
-### Ingestion
+A target architecture should consider moving:
 
-* **01_ingest_stripe**: pulls charges, refunds, payouts/fees; stores raw + normalized
-* **02_ingest_paypal**: pulls balances + transactions; stores raw + normalized
-* **03_ingest_square**: pulls payments/refunds; stores raw + normalized
-* **04_ingest_ach_import**: imports ACH batches (CSV/Bank export)
+- canonical schemas;
+- match scoring;
+- tolerance rules;
+- subset/split matching;
+- idempotency helpers;
+- validation;
 
-### Ledger + Matching
+into a small Python package/service with unit tests, while n8n remains the orchestration layer.
 
-* **05_build_unified_ledger**: normalizes into a single ledger table
-* **06_match_transactions**: generates candidates, scores, writes matches
-* **07_discrepancy_queue**: flags mismatches + creates review queue
-
-### Accounting Sync (optional)
-
-* **08_qbo_sync_journals**: creates journal entries in QBO; tracks sync state
-
-### Cash Visibility
-
-* **09_cash_position_snapshot**: computes per-processor + total cash position
+That is the primary engineering upgrade still required for this repository.
 
 ---
 
-## Demo strategy (for video)
+## Limitations
 
-A simple, compelling 3–6 minute demo format:
-
-1. **Problem (20s)**: “4 processors. Manual rec takes 10–20 hrs/week.”
-2. **Architecture (30s)**: show n8n → Postgres → matching → exception queue → (optional) QBO.
-3. **Live run (2–3m)**:
-
-   * trigger ingestion or show populated ledger
-   * run matching
-   * open exceptions (duplicates, fee mismatch, missing settlement)
-4. **QBO sync (30s)**: show journal entry created + idempotency
-5. **Cash position (20s)**: show consolidated cash position snapshot
-
-Script: `docs/demo-script.md`
-
----
-
-## Production notes
-
-* Use **per-processor cursors** and store them in `sync_state` for incremental pulls.
-* Enforce **idempotency** using unique constraints on `(processor, external_id, event_type)` at the raw level and `(processor_account_id, external_transaction_id)` at the normalized level.
-* Always preserve raw payloads for auditability.
-* Consider adding:
-
-  * dead-letter queue for failed ingestions
-  * reconciliation tolerances per processor
-  * alerting thresholds (e.g., any discrepancy over $500 triggers immediate Slack)
-
----
-
-## Roadmap
-
-* [ ] Add Xero journal sync
-* [ ] Add NetSuite CSV export
-* [ ] Add UI dashboard (simple web app or Metabase preset)
-* [ ] Improve split-payment matching with subset-sum optimization
-* [ ] Add automated FX pulls (ECB/OpenExchangeRates)
-
----
-
-## Contributing
-
-Contributions are welcome.
-
-* Open an issue describing the bug/feature
-* Include sample data (sanitized) if possible
-* For workflow changes, export the updated n8n JSON and keep node names stable
+- Processor JSON workflows are reference artifacts and require credential/configuration review before live use.
+- This repository does not independently prove the business-outcome numbers previously described in the README.
+- Matching behavior needs executable automated tests rather than documentation alone.
+- The optional QuickBooks flow requires validation against the target chart of accounts and accounting policy.
+- Multi-currency and settlement behavior must be tested against real processor edge cases before production use.
 
 ---
 
 ## License
 
-MIT (see `LICENSE`).
+MIT. See [`LICENSE`](./LICENSE).
 
 ---
 
-## Disclaimer
-
-This is an automation template and reference implementation. Always validate outputs with your accounting team and tailor the journal logic to your chart of accounts and reporting requirements.
-
----
-
-## Author
-
-Built by **Ugo Chukwu** — Financial Automation Engineer.
-
-If you’re dealing with reconciliation, revenue leakage, payment recovery, or finance ops automation at scale, feel free to reach out.
+Built by **Ugo Chukwu / Etherlabs** as a financial-systems reference implementation.
